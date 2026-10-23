@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "cursor.usage",
+  "name": "Cursor usage",
+  "version": "1.0.0",
+  "author": "ryan",
+  "license": "MIT",
+  "description": "Adds Cursor plan usage to the Agents panel. Grok/Cursor and Other models are separate meters. While enabled, usage refreshes every five minutes.",
+  "kinds": ["service"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
