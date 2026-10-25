@@ -4,10 +4,11 @@ Omarchy service plugin. It does not add a bar icon, and it does not install the 
 
 It writes a Cursor plan record to `~/.local/state/omarchy/agents/usage/cursor.json`. The Agents panel already watches that directory, so Cursor shows up beside the other subscriptions.
 
-The two included pools are separate meters:
+The included pools are separate meters:
 
 - **Grok/Cursor** — Auto, Composer, and Cursor Grok
 - **Other models** — named and API models
+- **Grok Bot** — Grok Bot usage, which resets weekly. It is left out if that lookup fails.
 
 The plan name, such as Pro+, comes from the same account summary. On-demand spend is not a meter. Omarchy draws these meters the same way it draws Claude, Codex, and Grok: the time left is at the end of each meter, and the percent is on hover.
 
@@ -45,7 +46,7 @@ cursor-agent
 
 Skip the first line when `cursor-agent` or the Cursor app is already signed in.
 
-The collector reads `~/.config/cursor/auth.json` first, then the desktop session in `~/.config/Cursor/User/globalStorage/state.vscdb`. `XDG_CONFIG_HOME` is honored. The session is sent only to `https://cursor.com/api/usage-summary`. Redirects are refused, and the token is not written into the usage record.
+The collector reads `~/.config/cursor/auth.json` first, then the desktop session in `~/.config/Cursor/User/globalStorage/state.vscdb`. `XDG_CONFIG_HOME` is honored. The session is sent only to `https://cursor.com/api/usage-summary` and `https://cursor.com/api/dashboard/get-sand-usage-status`. Redirects are refused, and the token is not written into the usage record.
 
 ## Remove
 

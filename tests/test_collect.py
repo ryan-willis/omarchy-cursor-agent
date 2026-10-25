@@ -136,5 +136,38 @@ class CollectTests(unittest.TestCase):
         self.assertNotIn("<", record["authHelpText"])
 
 
+    def test_grok_bot_meter_is_added(self):
+        token = jwt("auth0|user_123")
+        status = {
+            "usagePercent": 6.0857,
+            "hasNonZeroIncludedLimit": True,
+            "nextResetTimestampUtc": "2026-10-30T16:24:17.935Z",
+        }
+        record = collect.collect(
+            token=token, fetch=lambda _t: SUMMARY, fetch_grok_bot=lambda _t: status, clock=lambda: 1000
+        )
+        self.assertEqual(
+            [item["title"] for item in record["limits"]],
+            ["Grok/Cursor", "Other models", "Grok Bot"],
+        )
+        self.assertAlmostEqual(record["limits"][2]["percent"], 0.060857)
+        self.assertEqual(record["limits"][2]["resetsAt"], "2026-10-30T16:24:17.935000+00:00")
+
+    def test_grok_bot_failure_keeps_cursor_meters(self):
+        token = jwt("auth0|user_123")
+
+        def fail(_token):
+            raise collect.UsageError(collect.UNREACHABLE)
+
+        record = collect.collect(token=token, fetch=lambda _t: SUMMARY, fetch_grok_bot=fail, clock=lambda: 1000)
+        self.assertFalse(record["limitsStale"])
+        self.assertEqual([item["title"] for item in record["limits"]], ["Grok/Cursor", "Other models"])
+
+    def test_grok_bot_without_included_limit_is_omitted(self):
+        self.assertIsNone(collect.grok_bot_pool({"usagePercent": 0, "hasNonZeroIncludedLimit": False}))
+        with self.assertRaises(collect.UsageError):
+            collect.grok_bot_pool({"usagePercent": "6"})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,8 @@ from pathlib import Path
 AGENT_ID = "cursor"
 ORIGIN = "https://cursor.com"
 SUMMARY_PATH = "/api/usage-summary"
+GROK_BOT_PATH = "/api/dashboard/get-sand-usage-status"
+GROK_BOT_TITLE = "Grok Bot"
 POOLS = (
     ("autoPercentUsed", "Grok/Cursor"),
     ("apiPercentUsed", "Other models"),
@@ -68,6 +70,10 @@ def usage_path():
 
 def summary_cache_path():
     return cache_root() / "omarchy" / "agent-usage" / "cursor-summary.json"
+
+
+def grok_bot_cache_path():
+    return cache_root() / "omarchy" / "agent-usage" / "cursor-grok-bot.json"
 
 
 def read_json(path):
@@ -144,16 +150,22 @@ def session_cookie(token):
     return urllib.parse.quote(jwt_user(token) + "::" + token, safe="")
 
 
-def fetch_summary(token):
+def fetch_json(token, path, body=None):
+    headers = {
+        "Cookie": "WorkosCursorSessionToken=" + session_cookie(token),
+        "Accept": "application/json",
+        "Origin": ORIGIN,
+        "Referer": ORIGIN + "/dashboard",
+    }
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
-        ORIGIN + SUMMARY_PATH,
-        headers={
-            "Cookie": "WorkosCursorSessionToken=" + session_cookie(token),
-            "Accept": "application/json",
-            "Origin": ORIGIN,
-            "Referer": ORIGIN + "/dashboard",
-        },
-        method="GET",
+        ORIGIN + path,
+        data=data,
+        headers=headers,
+        method="GET" if data is None else "POST",
     )
     try:
         with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
@@ -177,20 +189,36 @@ def fetch_summary(token):
     return payload
 
 
+def fetch_summary(token):
+    return fetch_json(token, SUMMARY_PATH)
+
+
+def fetch_grok_bot_status(token):
+    return fetch_json(token, GROK_BOT_PATH, {})
+
+
 def token_key(token):
     return hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
-def cached_summary(token, force, clock):
-    cache = read_json(summary_cache_path()) or {}
+def cached_json(path, fetcher, token, force, clock):
+    cache = read_json(path) or {}
     age = clock() - float(cache.get("at") or 0)
     if not force and cache.get("key") == token_key(token) and 0 <= age < PROBE_REUSE_SECONDS:
         summary = cache.get("summary")
         if isinstance(summary, dict):
             return summary
-    summary = fetch_summary(token)
-    write_json(summary_cache_path(), {"key": token_key(token), "at": clock(), "summary": summary})
+    summary = fetcher(token)
+    write_json(path, {"key": token_key(token), "at": clock(), "summary": summary})
     return summary
+
+
+def cached_summary(token, force, clock):
+    return cached_json(summary_cache_path(), fetch_summary, token, force, clock)
+
+
+def cached_grok_bot_status(token, force, clock):
+    return cached_json(grok_bot_cache_path(), fetch_grok_bot_status, token, force, clock)
 
 
 def plan_label(membership):
@@ -253,6 +281,32 @@ def pools(summary):
     return limits
 
 
+def grok_bot_pool(status):
+    if not isinstance(status, dict) or status.get("hasNonZeroIncludedLimit") is False:
+        return None
+    if status.get("usagePercent") is None:
+        return None
+    return {
+        "label": GROK_BOT_TITLE,
+        "title": GROK_BOT_TITLE,
+        "percent": fraction(status["usagePercent"]),
+        "resetsAt": reset_at(status.get("nextResetTimestampUtc")),
+    }
+
+
+def grok_bot_limits(token, force, clock, fetch_grok_bot):
+    # Grok Bot is optional: any failure leaves the Cursor meters untouched.
+    try:
+        if fetch_grok_bot:
+            status = fetch_grok_bot(token)
+        else:
+            status = cached_grok_bot_status(token, force, clock)
+        pool = grok_bot_pool(status)
+    except UsageError:
+        return []
+    return [pool] if pool else []
+
+
 def base_record():
     return {
         "schemaVersion": 1,
@@ -297,7 +351,7 @@ def apply_failure(record, previous, message):
     return record
 
 
-def collect(force=False, fetch=None, token=None, clock=None):
+def collect(force=False, fetch=None, token=None, clock=None, fetch_grok_bot=None):
     clock = clock or time.time
     record = base_record()
     previous = previous_record()
@@ -307,6 +361,8 @@ def collect(force=False, fetch=None, token=None, clock=None):
             raise UsageError(SIGN_IN)
         summary = fetch(token) if fetch else cached_summary(token, force, clock)
         limits = pools(summary)
+        if fetch is None or fetch_grok_bot is not None:
+            limits = limits + grok_bot_limits(token, force, clock, fetch_grok_bot)
         record["limits"] = limits
         record["tierLabel"] = plan_label(summary.get("membershipType")) or "Cursor"
         if summary.get("isUnlimited") is True and record["tierLabel"]:
